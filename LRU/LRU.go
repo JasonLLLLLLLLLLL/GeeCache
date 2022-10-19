@@ -4,7 +4,7 @@ import "container/list"
 
 type Cache struct {
 	// 具体存储数据
-	l1 *list.List
+	ll *list.List
 	// 最大容量
 	maxBytes int64
 	// 已用容量
@@ -24,16 +24,16 @@ type entry struct {
 }
 // 允许值是实现了Val的任意类型
 type Value interface {
-	len() int
+	Len() int
 }
 
 // 实例化Cache
 func New(maxBytes int64, onEvicted func(string, Value)) *Cache{
 	return &Cache{
 		maxBytes: maxBytes,
-		l1: list.New(),
+		ll: list.New(),
 		cache: make(map[string]*list.Element),
-		OnEvicted: onEvicted
+		OnEvicted: onEvicted,
 	}
 }
 func (c *Cache) Get(key string) (value Value, ok bool) {
@@ -41,7 +41,7 @@ func (c *Cache) Get(key string) (value Value, ok bool) {
 	// cache 中存在数据的话
 	if ele, ok := c.cache[key]; ok {
 		// 移动到链表头部
-		c.l1.MoveToFront(ele)
+		c.ll.MoveToFront(ele)
 		// 断言--
 		kv := ele.Value.(*entry)
 
@@ -49,3 +49,49 @@ func (c *Cache) Get(key string) (value Value, ok bool) {
 	}
 	return
 }
+func  (c *Cache) RemoveOldest() {
+	ele := c.ll.Back()
+	if ele != nil {
+		// 从链表当中删除
+		c.ll.Remove(ele)
+		kv := ele.Value.(*entry)
+		// 从cache map 中删除
+		delete(c.cache, kv.key)
+		// 重新计算大小
+		c.nbytes -= int64(len(kv.key)) + int64(kv.value.Len())
+		// 执行回调函数? 回调-有时候可以去执行
+		if c.OnEvicted != nil {
+			c.OnEvicted(kv.key, kv.value)
+		}
+	}
+}
+
+func (c *Cache) Add(key string, value Value) {
+	// cache当中存在？更新键对应的值
+	if ele, ok := c.cache[key]; ok {
+
+		c.ll.MoveToFront(ele)
+
+		kv := ele.Value.(*entry)
+		// 更新新旧value的差值
+		c.nbytes += int64(value.Len()) - int64(kv.value.Len())
+
+		kv.value = value
+	} else {
+		// 不存在，list增加新节点
+		ele := c.ll.PushFront(&entry{key, value})
+		// 增加映射关系
+		c.cache[key] = ele
+		// 更新长度
+		c.nbytes += int64(len(key)) + int64(value.Len())
+	}
+	for c.maxBytes != 0 && c.maxBytes < c.nbytes {
+		c.RemoveOldest()
+	}
+}
+
+// Len the number of cache entries
+func (c *Cache) Len() int {
+	return c.ll.Len()
+}
+
